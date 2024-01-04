@@ -5,10 +5,12 @@ from pyecharts import options as opts
 from pyecharts.charts import Graph
 import sys
 import re
+import webbrowser
 from typing import Union
 import requests
 
 debug = False
+auto_open = False
 # RFC Class
 class RFC(json.JSONDecoder,json.JSONEncoder):
     def __init__(
@@ -109,12 +111,37 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         nodes = []
         links = []
 
+        m = {}
+        pair = {}
+
+        def add_nodes_links(rfcs : list):
+            for v in rfcs:
+                ## add node
+                if v.name in m.keys():
+                    continue
+                m[v.name] = v
+                nodes.append(opts.GraphNode(name=v.name, symbol_size=20))
+
+                ## add link
+                if f"{self.name}-{v.name}" in pair.keys() or f"{v.name}-{self.name}" in pair.keys():
+                    continue
+                pair[f"{self.name}-{v.name}"]=True
+                links.append(opts.GraphLink(source=self.name, target=v.name, value=2))
+
+        add_nodes_links(self.updated_by_rfc)
+        add_nodes_links(self.updates_rfc)
+        add_nodes_links(self.obsoletes_by_rfc)
+        add_nodes_links(self.obsoletes_rfc)
+
+
         c = (
             Graph()
             .add("", nodes, links, repulsion=4000)
             .set_global_opts(title_opts=opts.TitleOpts(title="Graph-GraphNode-GraphLink"))
             .render("graph_with_options.html")
         )
+        if auto_open:
+             webbrowser.open("graph_with_options.html")
         
         
 
