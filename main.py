@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import json
 import simplejson
 from pyecharts import options as opts
