@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import json
 import simplejson
+
 from pyecharts import options as opts
 from pyecharts.charts import Graph
 import sys
@@ -11,7 +12,7 @@ import requests
 
 debug = False
 auto_open = False
-max_depth = 2
+max_depth = 0
 # RFC Class
 class RFC(json.JSONDecoder,json.JSONEncoder):
     def __init__(
@@ -27,7 +28,7 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         # 淘汰了哪些协议
         obsoletes:Union[list,None]=None,
     ):
-        self.name=name
+        self.name=str(name)
         self.url=f"https://www.rfc-editor.org/rfc/rfc{name}"
 
         self.updated_by=[] if updated_by is None else updated_by
@@ -38,6 +39,9 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         self.obsoletes_by_rfc=[]
         self.obsoletes=[] if obsoletes is None else obsoletes
         self.obsoletes_rfc=[]
+
+        self.is_node_ranged = False
+        self.is_link_ranged = False
         
     def __eq__(self, target: object) -> bool:
         if type(target) != type(self):
@@ -53,6 +57,7 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
             updated_by_list=re.findall(r'target="_blank">(.*?)</a>',v+"</a>")
             for  u in updated_by_list:
                  self.updated_by.append(u)
+        self.updated_by = sorted(list(set(self.updated_by)))
 
         # match updates:
         updates_matched= re.findall(r"Updates:(.*?)</a>[\n|\s]",resp.text)
@@ -60,6 +65,7 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
             updates_list=re.findall(r'/rfc(.*?)">',v+"</a>")
             for  u in updates_list:
                  self.updates.append(u)
+        self.updates = sorted(list(set(self.updates)))
 
         # match obsolete_by:
         obsolete_by_matched= re.findall(r"Obsoleted by:(.*?)</a>[\n|\s]",resp.text)
@@ -67,14 +73,16 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
             obsoletes_list=re.findall(r'target="_blank">(.*?)</a>',v+"</a>")
             for  u in obsoletes_list:
                  self.obsoletes_by.append(u)
-
+        self.obsoletes_by = sorted(list(set(self.obsoletes_by)))
+        
         # match obsoletes:
         obsoletes_matched= re.findall(r"Obsoletes:(.*?)</a>[\n|\s]",resp.text)
         for v in obsoletes_matched:
             obsoletes_list=re.findall(r'/rfc(.*?[^target*])"',v+"</a>")
             for  u in obsoletes_list:
                  self.obsoletes.append(u)
-
+        self.obsoletes = sorted(list(set(self.obsoletes)))
+        
         if debug:
             print(f"rfc = {self.name}, updated_by = {self.updated_by}")
             print(f"rfc = {self.name}, updates = {self.updates}")
@@ -115,68 +123,101 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
             updates_rfc = _root_rfc.updates_rfc
         return root_rfc
     
-    def gen_nodes_links(self):
-        categories = ["obsoleted","updated","latest"]
+    def gen_categories(self):
+        return ["obsoleted","updated","latest"]
+
+    def __get_echart_node(self):
+        label_opt = opts.LabelOpts()
+        if len(self.obsoletes_by_rfc) != 0:
+            label_opt.opts["color"]="gray"
+        return opts.GraphNode(name=self.name, symbol_size=20,value=self.url,blur_label_opts=label_opt)
+    
+    # 循环引用可能造成：RecursionError: maximum recursion depth exceeded
+    # nodem: 存储rfc节点信息： rfc_id: *rfc
+    # is_node_ranged: 标识该rfc节点是否已经被遍历过了
+    def __gen_nodes(self, nodem = {}):
+        if self.is_node_ranged is False:
+            self.is_node_ranged = True
+            nodem[self.name]=self
+        else:
+            return
+        
+        def closure(rfcs: list):
+            for v in rfcs:
+                v.__gen_nodes(nodem)
+        closure(self.updated_by_rfc)
+        closure(self.updates_rfc)
+        closure(self.obsoletes_by_rfc)
+        closure(self.obsoletes_rfc)
+
+    def gen_nodes(self):
+        nodem = {}
+        self.__gen_nodes(nodem)
         nodes = []
+        all_nodes = nodem.values()
+        sorted(all_nodes,key=lambda x:x.name)
+        for v in all_nodes:
+            nodes.append(v.__get_echart_node())
+        return nodes
+
+        
+    # @inline
+    # def __get_echart_link(name1: str,name2: str):
+    #     return opts.GraphLink(source=str(name1), target=str(name2), value=2)
+    
+
+    def __gen_links(self,linksm = {}):
+        if self.is_link_ranged is False:
+            self.is_link_ranged = True
+        else:
+            return
+        # 构建self与updated_by_rfc，updates_rfc，obsoletes_by_rfc，obsoletes_rfc的link映射
+        def closure(rfcs: list):
+            for v in rfcs:
+                name_min,name_max = min(self.name,v.name),max(self.name,v.name)
+                key = (name_min, name_max)
+                linksm[key]=True
+
+        closure(self.updated_by_rfc)
+        closure(self.updates_rfc)
+        closure(self.obsoletes_by_rfc)
+        closure(self.obsoletes_rfc)
+
+        # 递归构建updated_by_rfc，updates_rfc，obsoletes_by_rfc，obsoletes_rfc下的映射
+        def cycle_closure(rfcs: list):
+            for v in rfcs:
+                v.__gen_links(linksm)
+
+        cycle_closure(self.updated_by_rfc)
+        cycle_closure(self.updates_rfc)
+        cycle_closure(self.obsoletes_by_rfc)
+        cycle_closure(self.obsoletes_rfc)
+
+    def gen_links(self,linksm = {}):
         links = []
+        linksm = {}
+        self.__gen_links(linksm)
+        for (name1,name2) in linksm.keys():
+            links.append(opts.GraphLink(source=str(name1), target=str(name2), value=2))
+        return links
 
-        all_rfc = {}
-        m = {}
-        pair = {}
-
-        def add_to_all(rfcs : list):
-            for v in rfcs:
-                all_rfc[v.name]=v
-                
-        add_to_all(self.updated_by_rfc)
-        add_to_all(self.updates_rfc)
-        add_to_all(self.obsoletes_by_rfc)
-        add_to_all(self.obsoletes_rfc)
-
-        def add_nodes_links(rfcs : list):
-            for v in rfcs:
-                ## add node
-                if v.name in m.keys():
-                    continue
-                m[v.name] = v
-
-                category = 0
-                show = True
-                if v.is_obsoleted():
-                    show = False
-                if v.is_updated():
-                    category = 1
-                if len(v.updated_by) == 0:
-                    category = 2
-
-                nodes.append(opts.GraphNode(name=v.name, symbol_size=20,value=v.url,label_opts={"normal":{"show":show}},category=category))
-
-                ## add link
-                if f"{self.name}-{v.name}" in pair.keys() or f"{v.name}-{self.name}" in pair.keys():
-                    continue
-                pair[f"{self.name}-{v.name}"]=True
-                links.append(opts.GraphLink(source=self.name, target=v.name, value=2))
-
-        add_nodes_links(self.updated_by_rfc)
-        add_nodes_links(self.updates_rfc)
-        add_nodes_links(self.obsoletes_by_rfc)
-        add_nodes_links(self.obsoletes_rfc)
-
-        return categories,nodes,links
 
     def gen_relation_html(self):
-        _,nodes,links = self.gen_nodes_links()
+        nodes = self.gen_nodes()
+        links = self.gen_links()
         c = (
-            Graph()
-            .add("", nodes, links, repulsion=400)
-            .set_global_opts(title_opts=opts.TitleOpts(title="Graph-GraphNode-GraphLink"))
+            Graph(init_opts=opts.InitOpts(width="2000px", height="2000px"))
+            .add("", nodes, links,repulsion = "200")
+            .set_global_opts(title_opts=opts.TitleOpts(is_show=False,title="Graph-GraphNode-GraphLink"))
             .render("graph_with_options.html")
         )
         if auto_open:
-             webbrowser.open("graph_with_options.html")
+             webbrowser.open("./graph_with_options.html")
     
     def gen_relation_html_with_les_miserables(self):
-        categories,nodes,links = self.gen_nodes_links()
+        categories = self.gen_categories()
+        nodes = self.gen_nodes()
+        links = self.gen_links()
         c = (
             Graph(init_opts=opts.InitOpts(width="2000px", height="2000px"))
             .add(
@@ -196,13 +237,9 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
             .render("graph_les_miserables.html")
         )
 
-        
-
-        
-
 
 def deep_qeury(rfc_num: str,depth=0, m: dict={}):
-    if depth >= max_depth:
+    if max_depth !=0 and depth >= max_depth:
         return None
     if rfc_num in m.keys():
         return m[rfc_num]
@@ -247,16 +284,29 @@ def deep_qeury(rfc_num: str,depth=0, m: dict={}):
 
 
 
+def parse_flag():
+    if len(sys.argv)<3:
+        return
+    for arg in sys.argv[2:]:
+        if arg == "--debug":
+            global debug
+            debug = True
+        if arg.startswith("--depth="):
+            global max_depth
+            max_depth = int(arg.lstrip("--depth="))
+            print("max_depth = ",max_depth)
+        if arg == "--auto-open":
+            global auto_open
+            auto_open = True
+
 if __name__=="__main__":
     if len(sys.argv) < 2:
         print("Must specify the rfc protocol number(the first args)")
         sys.exit(1)
-    if len(sys.argv)==3:
-        debug=bool(sys.argv[2])
-        print(f"debug is {debug}")
 
+    parse_flag()
     rfc_num = int(sys.argv[1])
     rfc = deep_qeury(rfc_num)
     root = rfc.find_root()
     root.gen_relation_html()
-    root.gen_relation_html_with_les_miserables()
+
