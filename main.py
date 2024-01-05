@@ -11,6 +11,7 @@ import requests
 
 debug = False
 auto_open = False
+max_depth = 2
 # RFC Class
 class RFC(json.JSONDecoder,json.JSONEncoder):
     def __init__(
@@ -38,6 +39,10 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         self.obsoletes=[] if obsoletes is None else obsoletes
         self.obsoletes_rfc=[]
         
+    def __eq__(self, target: object) -> bool:
+        if type(target) != type(self):
+            return False
+        return self.name==target.name
     
     def init(self):
         resp = requests.get(self.url)
@@ -97,22 +102,36 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
                     return rfc
         
         updates_rfc = self.updates_rfc
-        root_rfc = None
+        root_rfc = self
         while True:
-            _root_rfc = min_rfc(updates_rfc)
-            if root_rfc is None:
-                root_rfc = _root_rfc
-            elif root_rfc == _root_rfc:
+            if debug:
+                print(f"rfc_id = {root_rfc.name}, find_root.updates_rfc = {updates_rfc}",)
+            if len(updates_rfc) == 0:
                 break
-            updates_rfc = _root_rfc.update_rfcs
+            _root_rfc = min_rfc(updates_rfc)
+            if root_rfc == _root_rfc:
+                break
+            root_rfc=_root_rfc
+            updates_rfc = _root_rfc.updates_rfc
         return root_rfc
-
-    def gen_relation_html(self):
+    
+    def gen_nodes_links(self):
+        categories = ["obsoleted","updated","latest"]
         nodes = []
         links = []
 
+        all_rfc = {}
         m = {}
         pair = {}
+
+        def add_to_all(rfcs : list):
+            for v in rfcs:
+                all_rfc[v.name]=v
+                
+        add_to_all(self.updated_by_rfc)
+        add_to_all(self.updates_rfc)
+        add_to_all(self.obsoletes_by_rfc)
+        add_to_all(self.obsoletes_rfc)
 
         def add_nodes_links(rfcs : list):
             for v in rfcs:
@@ -120,7 +139,17 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
                 if v.name in m.keys():
                     continue
                 m[v.name] = v
-                nodes.append(opts.GraphNode(name=v.name, symbol_size=20))
+
+                category = 0
+                show = True
+                if v.is_obsoleted():
+                    show = False
+                if v.is_updated():
+                    category = 1
+                if len(v.updated_by) == 0:
+                    category = 2
+
+                nodes.append(opts.GraphNode(name=v.name, symbol_size=20,value=v.url,label_opts={"normal":{"show":show}},category=category))
 
                 ## add link
                 if f"{self.name}-{v.name}" in pair.keys() or f"{v.name}-{self.name}" in pair.keys():
@@ -133,20 +162,48 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         add_nodes_links(self.obsoletes_by_rfc)
         add_nodes_links(self.obsoletes_rfc)
 
+        return categories,nodes,links
 
+    def gen_relation_html(self):
+        _,nodes,links = self.gen_nodes_links()
         c = (
             Graph()
-            .add("", nodes, links, repulsion=4000)
+            .add("", nodes, links, repulsion=400)
             .set_global_opts(title_opts=opts.TitleOpts(title="Graph-GraphNode-GraphLink"))
             .render("graph_with_options.html")
         )
         if auto_open:
              webbrowser.open("graph_with_options.html")
+    
+    def gen_relation_html_with_les_miserables(self):
+        categories,nodes,links = self.gen_nodes_links()
+        c = (
+            Graph(init_opts=opts.InitOpts(width="2000px", height="2000px"))
+            .add(
+                "random",
+                nodes=nodes,
+                links=links,
+                categories=categories,
+                layout="circular",
+                is_rotate_label=True,
+                linestyle_opts=opts.LineStyleOpts(color="source", curve=0.3),
+                label_opts=opts.LabelOpts(position="right"),
+            )
+            .set_global_opts(
+                title_opts=opts.TitleOpts(title="Graph-Les Miserables"),
+                legend_opts=opts.LegendOpts(orient="vertical", pos_left="2%", pos_top="20%"),
+            )
+            .render("graph_les_miserables.html")
+        )
+
         
+
         
 
 
-def deep_qeury(rfc_num: str, m: dict={}):
+def deep_qeury(rfc_num: str,depth=0, m: dict={}):
+    if depth >= max_depth:
+        return None
     if rfc_num in m.keys():
         return m[rfc_num]
     if debug:
@@ -158,25 +215,33 @@ def deep_qeury(rfc_num: str, m: dict={}):
         if name in m.keys():
             rfc.updated_by_rfc.append(m[name])
             continue
-        rfc.updated_by_rfc.append(deep_qeury(name,m))
+        updated_by = deep_qeury(name,depth+1,m)
+        if updated_by is not None:
+            rfc.updated_by_rfc.append(updated_by)
     
     for name in rfc.updates:
         if name in m.keys():
             rfc.updates_rfc.append(m[name])
             continue
-        rfc.updates_rfc.append(deep_qeury(name,m))
+        update = deep_qeury(name,depth+1,m)
+        if update is not None:
+            rfc.updates_rfc.append(update)
 
     for name in rfc.obsoletes_by:
         if name in m.keys():
             rfc.obsoletes_by_rfc.append(m[name])
             continue
-        rfc.obsoletes_by_rfc.append(deep_qeury(name,m))
+        obsoleted_by = deep_qeury(name,depth+1,m)
+        if obsoleted_by is not None:
+            rfc.obsoletes_by_rfc.append(obsoleted_by)
 
     for name in rfc.obsoletes:
         if name in m.keys():
             rfc.obsoletes_rfc.append(m[name])
             continue
-        rfc.obsoletes_rfc.append(deep_qeury(name,m))
+        obsolete = deep_qeury(name,depth+1,m)
+        if obsolete is not None:
+            rfc.obsoletes_rfc.append(obsolete)
 
     return rfc
 
@@ -194,3 +259,4 @@ if __name__=="__main__":
     rfc = deep_qeury(rfc_num)
     root = rfc.find_root()
     root.gen_relation_html()
+    root.gen_relation_html_with_les_miserables()
