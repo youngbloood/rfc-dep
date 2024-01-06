@@ -31,6 +31,7 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
     ):
         self.name=str(name)
         self.url=f"https://www.rfc-editor.org/rfc/rfc{name}"
+        self.title=""
 
         self.updated_by=[] if updated_by is None else updated_by
         self.updated_by_rfc=[]
@@ -52,6 +53,11 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
     def init(self):
         resp = requests.get(self.url)
         # print("resp = ",resp.text[:10000])
+        # match title
+        title_matched= re.findall(r'<span class="h1">(.*?)</span>',resp.text)
+        if len(title_matched)>=1:
+            self.title=str(title_matched[0])
+
         # match updated_by:
         updated_by_matched= re.findall(r"Updated by:(.*?)</a>[\n|\s]",resp.text)
         for v in updated_by_matched:
@@ -114,7 +120,7 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         root_rfc = self
         while True:
             if debug:
-                print(f"rfc_id = {root_rfc.name}, find_root.updates_rfc = {updates_rfc}",)
+                print(f"rfc_id = {root_rfc.name}, find_root.updates_rfc = {updates_rfc}")
             if len(updates_rfc) == 0:
                 break
             _root_rfc = min_rfc(updates_rfc)
@@ -135,7 +141,11 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
             item_style = opts.ItemStyleOpts(color="#9999CC")
         else: # green
             item_style = opts.ItemStyleOpts(color="#80FF00")
-        return opts.GraphNode(name=self.name, symbol_size=70,value=self.url,itemstyle_opts=item_style)
+        return opts.GraphNode(name=self.name, 
+                              symbol_size=70,
+                              value=self.title,
+                              itemstyle_opts=item_style,
+                              )
     
     # 循环引用可能造成：RecursionError: maximum recursion depth exceeded
     # nodem: 存储rfc节点信息： rfc_id: *rfc
