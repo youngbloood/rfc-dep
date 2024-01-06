@@ -6,4 +6,4 @@ A tool that generate the dependency-tree-structure of a RFC protocol
 
 ## Useage
 
-main.py 1034
+python3 main.py 1034 --depth=5 --debug

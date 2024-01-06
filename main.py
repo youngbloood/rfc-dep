@@ -1,7 +1,5 @@
 #!/usr/bin/python3
 import json
-import simplejson
-
 from pyecharts import options as opts
 from pyecharts.charts import Graph
 import sys
@@ -10,9 +8,12 @@ import webbrowser
 from typing import Union
 import requests
 
+# flags
 debug = False
 auto_open = False
 max_depth = 0
+origin_rfc_num = 0
+
 # RFC Class
 class RFC(json.JSONDecoder,json.JSONEncoder):
     def __init__(
@@ -127,10 +128,14 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         return ["obsoleted","updated","latest"]
 
     def __get_echart_node(self):
-        label_opt = opts.LabelOpts()
-        if len(self.obsoletes_by_rfc) != 0:
-            label_opt.opts["color"]="gray"
-        return opts.GraphNode(name=self.name, symbol_size=20,value=self.url,blur_label_opts=label_opt)
+        item_style = opts.ItemStyleOpts()
+        if len(self.obsoletes_by_rfc) != 0 or len(self.obsoletes_by) != 0: # gray
+            item_style = opts.ItemStyleOpts(color="#9999CC")
+        elif str(self.name) == str(origin_rfc_num): # red
+            item_style = opts.ItemStyleOpts(color="#FF0000")
+        else: # green
+            item_style = opts.ItemStyleOpts(color="#80FF00")
+        return opts.GraphNode(name=self.name, symbol_size=70,value=self.url,itemstyle_opts=item_style)
     
     # 循环引用可能造成：RecursionError: maximum recursion depth exceeded
     # nodem: 存储rfc节点信息： rfc_id: *rfc
@@ -164,24 +169,24 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
     # @inline
     # def __get_echart_link(name1: str,name2: str):
     #     return opts.GraphLink(source=str(name1), target=str(name2), value=2)
-    
 
+    # is_link_ranged: 标识该rfc节点与其相关rfc节点的link连接是否已经遍历过了
     def __gen_links(self,linksm = {}):
         if self.is_link_ranged is False:
             self.is_link_ranged = True
         else:
             return
         # 构建self与updated_by_rfc，updates_rfc，obsoletes_by_rfc，obsoletes_rfc的link映射
-        def closure(rfcs: list):
+        def closure(rfcs: list,relation: str):
             for v in rfcs:
                 name_min,name_max = min(self.name,v.name),max(self.name,v.name)
                 key = (name_min, name_max)
-                linksm[key]=True
+                linksm[key]=relation
 
-        closure(self.updated_by_rfc)
-        closure(self.updates_rfc)
-        closure(self.obsoletes_by_rfc)
-        closure(self.obsoletes_rfc)
+        closure(self.updated_by_rfc,"updated_by")
+        closure(self.updates_rfc,"updated_by")
+        closure(self.obsoletes_by_rfc,"obsolete_by")
+        closure(self.obsoletes_rfc,"obsolete_by")
 
         # 递归构建updated_by_rfc，updates_rfc，obsoletes_by_rfc，obsoletes_rfc下的映射
         def cycle_closure(rfcs: list):
@@ -197,8 +202,13 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         links = []
         linksm = {}
         self.__gen_links(linksm)
-        for (name1,name2) in linksm.keys():
-            links.append(opts.GraphLink(source=str(name1), target=str(name2), value=2))
+        for (name1,name2),relation in linksm.items():
+            line_style = opts.LineStyleOpts()
+            if relation == "updated_by": # blue
+                line_style = opts.LineStyleOpts(color="#66CCCC")
+            else: # red
+                line_style = opts.LineStyleOpts(color="#FF0000")
+            links.append(opts.GraphLink(source=str(name1), target=str(name2), value=str(relation),linestyle_opts=line_style))
         return links
 
 
@@ -208,34 +218,11 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         c = (
             Graph(init_opts=opts.InitOpts(width="2000px", height="2000px"))
             .add("", nodes, links,repulsion = "200")
-            .set_global_opts(title_opts=opts.TitleOpts(is_show=False,title="Graph-GraphNode-GraphLink"))
-            .render("graph_with_options.html")
+            .set_global_opts(title_opts=opts.TitleOpts(is_show=False,title=f"RFC{origin_rfc_num}-DEPTH-{max_depth}"))
+            .render(f"./examples/rfc{origin_rfc_num}-depth-{max_depth}-dependency.html")
         )
         if auto_open:
-             webbrowser.open("./graph_with_options.html")
-    
-    def gen_relation_html_with_les_miserables(self):
-        categories = self.gen_categories()
-        nodes = self.gen_nodes()
-        links = self.gen_links()
-        c = (
-            Graph(init_opts=opts.InitOpts(width="2000px", height="2000px"))
-            .add(
-                "random",
-                nodes=nodes,
-                links=links,
-                categories=categories,
-                layout="circular",
-                is_rotate_label=True,
-                linestyle_opts=opts.LineStyleOpts(color="source", curve=0.3),
-                label_opts=opts.LabelOpts(position="right"),
-            )
-            .set_global_opts(
-                title_opts=opts.TitleOpts(title="Graph-Les Miserables"),
-                legend_opts=opts.LegendOpts(orient="vertical", pos_left="2%", pos_top="20%"),
-            )
-            .render("graph_les_miserables.html")
-        )
+             webbrowser.open(f"./examples/rfc{origin_rfc_num}-dependency.html")
 
 
 def deep_qeury(rfc_num: str,depth=0, m: dict={}):
@@ -285,8 +272,16 @@ def deep_qeury(rfc_num: str,depth=0, m: dict={}):
 
 
 def parse_flag():
+    if len(sys.argv) < 2:
+        print("Must specify the rfc protocol number(the first args)")
+        sys.exit(1)
+
+    global origin_rfc_num
+    origin_rfc_num = int(sys.argv[1])
+
     if len(sys.argv)<3:
         return
+    
     for arg in sys.argv[2:]:
         if arg == "--debug":
             global debug
@@ -294,19 +289,16 @@ def parse_flag():
         if arg.startswith("--depth="):
             global max_depth
             max_depth = int(arg.lstrip("--depth="))
-            print("max_depth = ",max_depth)
         if arg == "--auto-open":
             global auto_open
             auto_open = True
+    print(f"max_depth={max_depth},auto_open={auto_open},debug={debug}")
+    
 
 if __name__=="__main__":
-    if len(sys.argv) < 2:
-        print("Must specify the rfc protocol number(the first args)")
-        sys.exit(1)
-
     parse_flag()
-    rfc_num = int(sys.argv[1])
-    rfc = deep_qeury(rfc_num)
+    
+    rfc = deep_qeury(str(origin_rfc_num))
     root = rfc.find_root()
     root.gen_relation_html()
 
