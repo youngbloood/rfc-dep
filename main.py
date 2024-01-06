@@ -129,10 +129,10 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
 
     def __get_echart_node(self):
         item_style = opts.ItemStyleOpts()
-        if len(self.obsoletes_by_rfc) != 0 or len(self.obsoletes_by) != 0: # gray
-            item_style = opts.ItemStyleOpts(color="#9999CC")
-        elif str(self.name) == str(origin_rfc_num): # red
+        if str(self.name) == str(origin_rfc_num): # red
             item_style = opts.ItemStyleOpts(color="#FF0000")
+        elif len(self.obsoletes_by_rfc) != 0 or len(self.obsoletes_by) != 0: # gray
+            item_style = opts.ItemStyleOpts(color="#9999CC")
         else: # green
             item_style = opts.ItemStyleOpts(color="#80FF00")
         return opts.GraphNode(name=self.name, symbol_size=70,value=self.url,itemstyle_opts=item_style)
@@ -218,7 +218,7 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         c = (
             Graph(init_opts=opts.InitOpts(width="2000px", height="2000px"))
             .add("", nodes, links,repulsion = "200")
-            .set_global_opts(title_opts=opts.TitleOpts(is_show=False,title=f"RFC{origin_rfc_num}-DEPTH-{max_depth}"))
+            .set_global_opts(title_opts=opts.TitleOpts(title=f"RFC{origin_rfc_num}-DEPTH-{max_depth}"))
             .render(f"./examples/rfc{origin_rfc_num}-depth-{max_depth}-dependency.html")
         )
         if auto_open:
