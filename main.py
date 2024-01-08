@@ -57,6 +57,10 @@ class RFC(json.JSONDecoder,json.JSONEncoder):
         title_matched= re.findall(r'<span class="h1">(.*?)</span>',resp.text)
         if len(title_matched)>=1:
             self.title=str(title_matched[0])
+        else:
+            title_matched= re.findall(r'<h1 id="title">(.*?)</h1>',resp.text)
+            if len(title_matched)>=1:
+                self.title=str(title_matched[0])
 
         # match updated_by:
         updated_by_matched= re.findall(r"Updated by:(.*?)</a>[\n|\s]",resp.text)
